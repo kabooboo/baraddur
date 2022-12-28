@@ -26,16 +26,16 @@ classifiers = [
 ]
 dependencies = [
   "typer>=0.7",
-  "python-gitlab>=3,<4",
-  "GitPython>=3,<4",
   "rich>=12,<13",
+  "pydantic>=1,<2",
 ]
-description = "Copy locally a Gitlab group or instance"
+description = "Execute commands based on regex-matching sub-directories"
 dynamic = ["version"]
 keywords = [
-  "gitlab",
-  "clone",
-  "copy",
+  "regex",
+  "execute",
+  "process",
+  "command",
 ]
 license-files = {paths = ["LICENSE"]}
 name = "baraddur"
