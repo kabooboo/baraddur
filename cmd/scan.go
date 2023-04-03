@@ -13,15 +13,21 @@
 package cmd
 
 import (
-	"fmt"
-	"log"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
+	"sync"
+	"time"
 
+	"github.com/sirupsen/logrus"
+	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
 
 var (
+	logger     = logrus.New()
 	configFile string
 	scanCmd    = &cobra.Command{
 		Use:   "scan <target-directory>",
@@ -35,23 +41,25 @@ command whenever a regexp match is found, based on the configuration file.`,
 
 func init() {
 
+	// Cobra configuration
 	scanCmd.PersistentFlags().StringVarP(&configFile, "config", "c", "./baraddur.yml", "Path to config file.")
 	scanCmd.PersistentFlags().BoolP("debug", "", false, "Print debugging information")
 	scanCmd.PersistentFlags().BoolP("dry-run", "", false, "Scan without executing commands")
-
-	scanCmd.MarkPersistentFlagRequired("config")
+	scanCmd.PersistentFlags().IntP("workers", "", 5, "Number of parallel workers to use")
 
 	rootCmd.AddCommand(scanCmd)
+
+	// Viper flag configuration
+	viper.BindPFlag("debug", scanCmd.PersistentFlags().Lookup("debug"))
+	viper.BindPFlag("dry-run", scanCmd.PersistentFlags().Lookup("dry-run"))
+	viper.BindPFlag("workers", scanCmd.PersistentFlags().Lookup("workers"))
 
 }
 
 func initConfig() {
-	viper.SetConfigFile(configFile)
 
-	err := viper.BindPFlags(rootCmd.PersistentFlags())
-	if err != nil {
-		log.Println("Unable to bind pflags:", err)
-	}
+	// Viper configuration
+	viper.SetConfigFile(configFile)
 
 	envReplacer := strings.NewReplacer("-", "_")
 
@@ -60,19 +68,91 @@ func initConfig() {
 	viper.AutomaticEnv()
 
 	if err := viper.ReadInConfig(); err == nil {
-		log.Println("Using config file:", viper.ConfigFileUsed())
+		logger.Info("Using config file: ", viper.ConfigFileUsed())
+	} else {
+		logger.Error("Couldn't load config: ", err)
 	}
 
-	log.SetFlags(0)
+	// Logrus configuration
+	logger.SetFormatter(&log.TextFormatter{})
+	logger.SetOutput(os.Stdout)
 
-	// TODO: figure logrus out
+	if viper.GetBool("debug") {
+		logger.SetLevel(log.DebugLevel)
+	} else {
+		logger.SetLevel(log.InfoLevel)
+	}
 
 }
 
 func runCommand(cmd *cobra.Command, args []string) {
-	fmt.Println(fmt.Println(args))
 
 	initConfig()
 
-	// TODO: implementation
+	root := "/home/gcreti/Projects"      // example - WIP
+	exp_str := `^.*requirements\.txt.*$` // example - WIP
+
+	re, err := regexp.Compile(exp_str)
+
+	if err != nil {
+		log.WithFields(log.Fields{"regexp": exp_str}).Error("Couldn't parse regexp")
+		// return?
+	}
+
+	log.WithFields(log.Fields{"regexp": exp_str}).Info("Found Regexp")
+
+	jobs := make(chan string)
+
+	log.Debug("Starting WaitGroups")
+	var workerWaitGroup sync.WaitGroup
+	var scannerWaitGroup sync.WaitGroup
+
+	log.WithFields(log.Fields{"workers": viper.GetInt("workers")}).Info("Starting workers")
+	for w := 1; w <= viper.GetInt("workers"); w++ {
+		workerWaitGroup.Add(1)
+		go worker(w, jobs, &workerWaitGroup)
+	}
+
+	scannerWaitGroup.Add(1)
+	walkDir(root, re, jobs, &scannerWaitGroup)
+
+	workerWaitGroup.Wait()
+	scannerWaitGroup.Wait()
+	close(jobs)
+}
+
+func walkDir(dir string, re *regexp.Regexp, jobs chan string, wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	visit := func(path string, f os.FileInfo, err error) error {
+
+		if re.MatchString(path) {
+			log.WithFields(log.Fields{"match": path}).Info("Found match")
+			jobs <- path
+		}
+
+		if f.IsDir() && path != dir {
+			wg.Add(1)
+
+			go walkDir(path, re, jobs, wg)
+			return filepath.SkipDir
+		}
+		if f.Mode().IsRegular() {
+
+		}
+		return nil
+	}
+
+	filepath.Walk(dir, visit)
+}
+
+func worker(id int, jobs <-chan string, wg *sync.WaitGroup) {
+
+	defer wg.Done()
+
+	for j := range jobs {
+		log.WithFields(log.Fields{"worker": id, "job": j}).Info("Started handling match")
+		time.Sleep(time.Second)
+		log.WithFields(log.Fields{"worker": id, "job": j}).Info("Finished handling match")
+	}
 }
