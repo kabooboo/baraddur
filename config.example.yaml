@@ -9,7 +9,7 @@ jobs:
         echo "$1"
   # git pull for each repository within
   - scan:
-    regex: "^(.*)\\/.git$"
+      regex: "^(.*)\\/.git$"
     work:
       script: |
         cd $1

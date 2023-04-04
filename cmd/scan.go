@@ -95,7 +95,9 @@ func runCommand(cmd *cobra.Command, args []string) {
 	re, err := regexp.Compile(exp_str)
 
 	if err != nil {
-		log.WithFields(log.Fields{"regexp": exp_str}).Error("Couldn't parse regexp")
+		log.WithFields(
+			log.Fields{"regexp": exp_str, "error": err.Error()},
+		).Error("Couldn't parse regexp")
 		// return?
 	}
 
@@ -127,7 +129,7 @@ func walkDir(dir string, re *regexp.Regexp, jobs chan string, wg *sync.WaitGroup
 	visit := func(path string, f os.FileInfo, err error) error {
 
 		if re.MatchString(path) {
-			log.WithFields(log.Fields{"match": path}).Info("Found match")
+			log.WithFields(log.Fields{"match": path}).Debug("Found match")
 			jobs <- path
 		}
 
