@@ -13,12 +13,13 @@
 package cmd
 
 import (
+	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/sirupsen/logrus"
 	log "github.com/sirupsen/logrus"
@@ -85,12 +86,19 @@ func initConfig() {
 
 }
 
+type Job struct {
+	Command     string
+	Args        []string
+	TriggerPath string
+}
+
 func runCommand(cmd *cobra.Command, args []string) {
 
 	initConfig()
 
 	root := "/home/gcreti/Projects"      // example - WIP
-	exp_str := `^.*requirements\.txt.*$` // example - WIP
+	exp_str := `^(.*requirements\.txt)$` // example - WIP
+	command_template := []string{`bash`, `-c`, `cat $1`}
 
 	re, err := regexp.Compile(exp_str)
 
@@ -103,7 +111,7 @@ func runCommand(cmd *cobra.Command, args []string) {
 
 	log.WithFields(log.Fields{"regexp": exp_str}).Info("Found Regexp")
 
-	jobs := make(chan string)
+	jobs := make(chan *Job)
 
 	log.Debug("Starting WaitGroups")
 	var workerWaitGroup sync.WaitGroup
@@ -116,27 +124,42 @@ func runCommand(cmd *cobra.Command, args []string) {
 	}
 
 	scannerWaitGroup.Add(1)
-	walkDir(root, re, jobs, &scannerWaitGroup)
+	walkDir(root, re, &command_template, jobs, &scannerWaitGroup)
 
 	workerWaitGroup.Wait()
 	scannerWaitGroup.Wait()
 	close(jobs)
 }
 
-func walkDir(dir string, re *regexp.Regexp, jobs chan string, wg *sync.WaitGroup) {
+func walkDir(dir string, re *regexp.Regexp, command_and_args_template *[]string, jobs chan *Job, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	visit := func(path string, f os.FileInfo, err error) error {
 
-		if re.MatchString(path) {
+		matches := re.FindStringSubmatch(path)
+
+		if matches != nil {
+
+			job := new(Job)
+
+			job.TriggerPath = path
+
+			command_and_args := make([]string, len(*command_and_args_template))
+			for i, v := range *command_and_args_template {
+				logger.Debug(v)
+				command_and_args[i] = re.ReplaceAllString(path, v)
+			}
+			job.Command = (command_and_args)[0]
+			job.Args = (command_and_args)[1:]
+
 			log.WithFields(log.Fields{"match": path}).Debug("Found match")
-			jobs <- path
+			jobs <- job
 		}
 
 		if f.IsDir() && path != dir {
 			wg.Add(1)
 
-			go walkDir(path, re, jobs, wg)
+			go walkDir(path, re, command_and_args_template, jobs, wg)
 			return filepath.SkipDir
 		}
 		if f.Mode().IsRegular() {
@@ -148,13 +171,41 @@ func walkDir(dir string, re *regexp.Regexp, jobs chan string, wg *sync.WaitGroup
 	filepath.Walk(dir, visit)
 }
 
-func worker(id int, jobs <-chan string, wg *sync.WaitGroup) {
+func worker(id int, jobs <-chan *Job, wg *sync.WaitGroup) {
 
 	defer wg.Done()
 
 	for j := range jobs {
-		log.WithFields(log.Fields{"worker": id, "job": j}).Info("Started handling match")
-		time.Sleep(time.Second)
-		log.WithFields(log.Fields{"worker": id, "job": j}).Info("Finished handling match")
+		logger.WithFields(log.Fields{"worker": id, "job_path": j.TriggerPath}).Info("Started handling match")
+		logger.WithFields(log.Fields{
+			"worker":   id,
+			"job_path": j.TriggerPath,
+			"command":  j.Command,
+			"args":     j.Args,
+		}).Info("Will run command")
+
+		var stdout bytes.Buffer
+		var stderr bytes.Buffer
+
+		cmd := exec.Command(j.Command, j.Args...)
+
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+
+		err := cmd.Run()
+
+		if err != nil {
+			logger.WithFields(
+				log.Fields{
+					"worker":   id,
+					"job_path": j.TriggerPath,
+					"stderr":   stderr.String(),
+					"out":      stdout.String(),
+					"goerror":  err,
+				}).Error("Could not run command")
+		}
+		logger.WithFields(log.Fields{"worker": id, "job_path": j.TriggerPath}).Debug("Output: ", stdout.String())
+
+		logger.WithFields(log.Fields{"worker": id, "job_path": j.TriggerPath}).Info("Finished handling match")
 	}
 }
