@@ -25,9 +25,7 @@ in different parts of a mono-repo, but it can be used to many other things.
 
 To install `baraddur`, simply run:
 
-```shq
-pip install --user baraddur
-```
+> WIP
 
 ## Parameters
 
