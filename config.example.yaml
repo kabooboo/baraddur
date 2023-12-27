@@ -1,28 +1,14 @@
-scanner_concurrency: 10
-worker_concurrency: 10
 jobs:
   # echo current working directory for each directory
-  - scan:
-      regex: "^(.*)$"
-    work:
-      script: |
-        echo "$1"
-  # git pull for each repository within
-  - scan:
-      regex: "^(.*)\\/.git$"
-    work:
-      script: |
-        cd $1
-        git pull
-  # Generate a bandit-report for all repositories
-  - scan:
-      regex: "(.*)\\/([a-zA-Z-_]+).py$"
-      interupt_when_matched: True # This flag stops scanning for the current,
-      # branch, in order to prevent duplicate runs.
-      # The software guarantees that for each directory, all files in the
-      # directory are checked against the regex (for a given job) before
-      # going for the next
-    work:
-      script: |
-        cd $1
-        python3 -m bandit . -f json -o /tmp/$1.json
+  - name: find-git
+    pattern: "^(.*)\\.git$"
+    command:
+        - sh
+        - -c
+        - echo "Found git directory! $1"
+  - name: find-config
+    pattern: "^(.*)\\.(conf|config|cfg)$"
+    command:
+        - sh
+        - -c
+        - '>&2 echo "Found $2 file! $1"'

@@ -52,9 +52,10 @@ command whenever a regexp match is found, based on the configuration file.`,
 func init() {
 
 	// Cobra configuration
-	scanCmd.PersistentFlags().StringVarP(&configFile, "config", "c", "./baraddur.yml", "Path to config file.")
+	scanCmd.PersistentFlags().StringVarP(&configFile, "config", "c", "", "Path to config file. Defaults to ~/.baraddur/config.yaml")
 	scanCmd.PersistentFlags().StringP("log-level", "l", "info", "LogLevel for the CLI. One of \"error\", \"info\", \"debug\" or \"trace\".")
 	scanCmd.PersistentFlags().StringP("output", "o", "colored", "How to print the command's outouts. One of \"colored\", \"no-color\" or \"none\".")
+	scanCmd.PersistentFlags().StringP("job", "j", "", "Specify a job to run.")
 	scanCmd.PersistentFlags().BoolP("dry-run", "d", false, "Scan without executing commands")
 	scanCmd.PersistentFlags().IntP("workers", "w", 5, "Number of parallel workers to use for command execution")
 
@@ -63,6 +64,7 @@ func init() {
 	// Viper flag configuration
 	viper.BindPFlag("log-level", scanCmd.PersistentFlags().Lookup("log-level"))
 	viper.BindPFlag("output", scanCmd.PersistentFlags().Lookup("output"))
+	viper.BindPFlag("job", scanCmd.PersistentFlags().Lookup("job"))
 	viper.BindPFlag("dry-run", scanCmd.PersistentFlags().Lookup("dry-run"))
 	viper.BindPFlag("workers", scanCmd.PersistentFlags().Lookup("workers"))
 
@@ -71,6 +73,11 @@ func init() {
 func initConfig() {
 
 	// Viper configuration
+	if configFile == "" {
+		homeDir, _ := os.UserHomeDir()
+		configFile = homeDir + "/.baraddur/config.yaml"
+	}
+
 	viper.SetConfigFile(configFile)
 
 	envReplacer := strings.NewReplacer("-", "_")
@@ -123,6 +130,7 @@ type CommandJob struct {
 }
 
 type ScanJob struct {
+	Name    string
 	Pattern string
 	Command []string
 }
@@ -145,11 +153,17 @@ func runCommand(cmd *cobra.Command, args []string) {
 
 	jobs := make(chan *CommandJob)
 
-	for idx, job := range scanConfig.Jobs {
+	for _, job := range scanConfig.Jobs {
 
 		pattern_str := job.Pattern
 		command := job.Command
-		logrus.WithFields(logrus.Fields{"root": root, "job": idx, "pattern": pattern_str}).Info("Starting job")
+		name := job.Name
+
+		if viper.GetString("job") != "" && viper.GetString("job") != name {
+			continue
+		}
+
+		logrus.WithFields(logrus.Fields{"root": root, "job": name, "pattern": pattern_str}).Info("Starting job")
 
 		re, err := regexp.Compile(pattern_str)
 
@@ -174,7 +188,7 @@ func runCommand(cmd *cobra.Command, args []string) {
 		scannerWaitGroup.Add(1)
 		walkDir(root, re, &command, jobs, &scannerWaitGroup)
 
-		logrus.WithFields(logrus.Fields{"root": root, "job": idx, "pattern": pattern_str}).Info("Job done")
+		logrus.WithFields(logrus.Fields{"root": root, "job": name, "pattern": pattern_str}).Info("Job done")
 
 	}
 
