@@ -2,7 +2,7 @@
 
 ## Stuff to add
 
-1. [MUST] Implement an action capable of initializing a lightweight `baraddur.yml` template file.
+1. Implement an action capable of initializing a lightweight `baraddur.yml` template file.
 2. Implement a counter that allows to track completion
    **Note**: this needs to be implemented as a separate channel and some counters
 3. Make it possible to ignore failure (or even raise critical if a given scan fails)
