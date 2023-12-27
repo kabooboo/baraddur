@@ -12,3 +12,5 @@
 7. Publishing of releases (Understand `goreleaser`)
 8. Publishing of Docker Image
 9. A proper README.
+10. Be able to prevent pattern searching downwards
+11. Example use-case: git grep history and blame
