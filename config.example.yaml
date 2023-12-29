@@ -6,9 +6,17 @@ jobs:
         - sh
         - -c
         - echo "Found git directory! $1"
-  - name: find-config
-    pattern: "^(.*)\\.(conf|config|cfg)$"
-    command:
+  # Some useful examples...
+  - name: who-did-it
+    # Who TF did this? Go recursively through repositories and find git who
+    # commited lines that match a given regex
+    pattern: "^(.*)/\\.git$"
+    command: # Supports Go templates: `.Env` and `.Arg` - Refer to the documentation
         - sh
         - -c
-        - '>&2 echo "Found $2 file! $1"'
+        - >-
+          cd $1;
+          git rev-list --all
+          | xargs -r git grep -EIn "{{ (index .Arg 0) }}"
+          | awk -F: '{cmd="git blame -L" $$3 ",+1 " $$1 " -- " $$2 " | cat"; system(cmd) }'
+          | sort | uniq  | xargs -rI% echo "$1: %"

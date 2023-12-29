@@ -12,6 +12,9 @@
 7. Publishing of releases (Understand `goreleaser`)
 8. Publishing of Docker Image
 9. A proper README.
-10. Be able to prevent pattern searching downwards -> Just match end of string?
 11. [MUST] Example use-case: git grep history and blame
 14. [MUST] Be able to pass arbitrary arguments to job
+14. [MUST] Find a way to differentiate directories from files
+14. [MUST] Be able to grep file contents
+14. [MUST] Be able to change directory in the given context
+

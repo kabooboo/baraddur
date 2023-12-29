@@ -14,6 +14,7 @@ package cmd
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -21,6 +22,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"text/template"
 
 	"golang.org/x/exp/slices"
 
@@ -44,7 +46,7 @@ var (
 		Short: "Scan a directory recursively and execute code",
 		Long: `Recursively iterate over a directory and execute an arbitrary
 command whenever a regexp match is found, based on the configuration file.`,
-		Args: cobra.ExactArgs(1),
+		Args: cobra.MinimumNArgs(1),
 		Run:  runCommand,
 	}
 )
@@ -126,6 +128,7 @@ func initConfig() {
 type CommandJob struct {
 	Command     string
 	Args        []string
+	contextArgs []string
 	TriggerPath string
 }
 
@@ -139,11 +142,19 @@ type ScanConfig struct {
 	Jobs []ScanJob
 }
 
+type Context struct {
+	Arg []string
+	Env []map[string]string
+}
+
 func runCommand(cmd *cobra.Command, args []string) {
 
 	initConfig()
 
 	root := args[0]
+	context := new(Context)
+	context.Arg = args[1:]
+	// TODO: set context.Env
 	scanConfig := ScanConfig{}
 	viper.Unmarshal(&scanConfig)
 	logrus.WithFields(logrus.Fields{"root": root}).Info("Starting Baraddur")
@@ -151,7 +162,7 @@ func runCommand(cmd *cobra.Command, args []string) {
 	var workerWaitGroup sync.WaitGroup
 	var scannerWaitGroup sync.WaitGroup
 
-	jobs := make(chan *CommandJob)
+	commandJobs := make(chan *CommandJob)
 
 	for _, job := range scanConfig.Jobs {
 
@@ -181,19 +192,17 @@ func runCommand(cmd *cobra.Command, args []string) {
 		logrus.WithFields(logrus.Fields{"workers": viper.GetInt("workers")}).Debug("Starting workers")
 		for w := 1; w <= viper.GetInt("workers"); w++ {
 			workerWaitGroup.Add(1)
-			go worker(w, jobs, &workerWaitGroup)
+			go worker(w, commandJobs, &workerWaitGroup)
 		}
 
 		// TODO: Make scan parallelizable
 		scannerWaitGroup.Add(1)
-		walkDir(root, re, &command, jobs, &scannerWaitGroup)
-
-		logrus.WithFields(logrus.Fields{"root": root, "job": name, "pattern": pattern_str}).Info("Job done")
+		walkDir(root, re, context, &command, commandJobs, &scannerWaitGroup)
 
 	}
 
 	scannerWaitGroup.Wait()
-	close(jobs)
+	close(commandJobs)
 	workerWaitGroup.Wait()
 
 	logrus.WithFields(logrus.Fields{"root": root}).Info("Baraddur done")
@@ -207,7 +216,20 @@ func truncateText(s string, max int) string {
 	return s[:strings.LastIndex(s[:max], " ")]
 }
 
-func walkDir(dir string, re *regexp.Regexp, commandAndArgsTemplate *[]string, commandJobs chan *CommandJob, wg *sync.WaitGroup) {
+func executeTemplate(name string, data interface{}, t *template.Template) (string, error) {
+	buf := &bytes.Buffer{}
+	err := t.ExecuteTemplate(buf, name, data)
+	return buf.String(), err
+}
+
+func walkDir(
+	dir string,
+	re *regexp.Regexp,
+	context *Context,
+	commandAndArgsTemplate *[]string,
+	commandJobs chan *CommandJob,
+	wg *sync.WaitGroup,
+) {
 	defer wg.Done()
 
 	// TODO: find a means to differentiate files from directories.
@@ -223,10 +245,28 @@ func walkDir(dir string, re *regexp.Regexp, commandAndArgsTemplate *[]string, co
 			job.TriggerPath = path
 
 			command_and_args := make([]string, len(*commandAndArgsTemplate))
-			for i, v := range *commandAndArgsTemplate {
-				logger.Debug(v)
-				command_and_args[i] = re.ReplaceAllString(path, v)
+
+			for idx, arg := range *commandAndArgsTemplate {
+
+				arg_template := template.Must(template.New("").Parse(arg))
+				templated_arg, err := executeTemplate("", context, arg_template)
+
+				logger.WithFields(logrus.Fields{
+					"job_path": job.TriggerPath,
+					"slice":    templated_arg,
+				}).Trace("Command slice")
+
+				if err != nil {
+					logger.WithFields(logrus.Fields{
+						"job_path": job.TriggerPath,
+						"error":    err,
+						"slice":    arg,
+					}).Fatal("Failed to template command slice")
+				}
+
+				command_and_args[idx] = re.ReplaceAllString(path, templated_arg)
 			}
+
 			job.Command = (command_and_args)[0]
 			job.Args = (command_and_args)[1:]
 
@@ -237,7 +277,7 @@ func walkDir(dir string, re *regexp.Regexp, commandAndArgsTemplate *[]string, co
 		if f.IsDir() && path != dir {
 			wg.Add(1)
 
-			go walkDir(path, re, commandAndArgsTemplate, commandJobs, wg)
+			go walkDir(path, re, context, commandAndArgsTemplate, commandJobs, wg)
 			return filepath.SkipDir
 		}
 		if f.Mode().IsRegular() {
